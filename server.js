@@ -24,16 +24,54 @@ const pool = process.env.DATABASE_URL
       port: parseInt(process.env.DB_PORT || '5432'),
     });
 
-// Έλεγχος σύνδεσης με τη βάση κατά την εκκίνηση
-pool.connect((err, client, release) => {
-  if (err) {
-    console.error('❌ ΣΦΑΛΜΑ ΣΥΝΔΕΣΗΣ: Ο κωδικός ή ο χρήστης είναι λάθος.');
+// Έλεγχος σύνδεσης με τη βάση και αυτόματη δημιουργία πινάκων
+const initDb = async () => {
+  try {
+    const client = await pool.connect();
+    console.log('✅ Επιτυχής σύνδεση στην PostgreSQL!');
+    
+    // Δημιουργία πίνακα προσωπικού
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS staff (
+          id UUID PRIMARY KEY,
+          name VARCHAR(255) NOT NULL,
+          role VARCHAR(100),
+          is_active BOOLEAN DEFAULT FALSE
+      );
+    `);
+
+    // Δημιουργία πίνακα διαλειμμάτων
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS breaks (
+          id UUID PRIMARY KEY,
+          staff_name VARCHAR(255) NOT NULL,
+          supervisor_name VARCHAR(255),
+          date DATE NOT NULL,
+          shift VARCHAR(50),
+          schedule VARCHAR(50),
+          break30_1_from VARCHAR(5),
+          break30_1_to VARCHAR(5),
+          break30_2_from VARCHAR(5),
+          break30_2_to VARCHAR(5),
+          break10_1_from VARCHAR(5),
+          break10_1_to VARCHAR(5),
+          break10_2_from VARCHAR(5),
+          break10_2_to VARCHAR(5),
+          created_at BIGINT NOT NULL
+      );
+    `);
+    
+    console.log('✅ Οι πίνακες της βάσης είναι έτοιμοι!');
+    client.release();
+  } catch (err) {
+    console.error('❌ ΣΦΑΛΜΑ ΣΥΝΔΕΣΗΣ Ή ΔΗΜΙΟΥΡΓΙΑΣ ΠΙΝΑΚΩΝ:');
     console.error('Μήνυμα σφάλματος:', err.message);
-    return;
+    // Δεν κάνουμε exit(1) εδώ για να επιτρέψουμε στο app να ξεκινήσει 
+    // ακόμα και αν η βάση αργήσει να απαντήσει (το Render θα το ξαναπροσπαθήσει)
   }
-  console.log('✅ Επιτυχής σύνδεση στην PostgreSQL!');
-  release();
-});
+};
+
+initDb();
 
 // STAFF ENDPOINTS
 app.get('/api/staff', async (req, res) => {
@@ -186,8 +224,25 @@ app.use(express.static(buildPath));
 // match one above, send back React's index.html file.
 app.get('*', (req, res) => {
   if (!req.path.startsWith('/api')) {
-    res.sendFile(path.join(buildPath, 'index.html'));
+    const indexPath = path.join(buildPath, 'index.html');
+    res.sendFile(indexPath, (err) => {
+      if (err) {
+        console.error('❌ Error sending index.html:', err.message);
+        res.status(500).send('Το frontend δεν έχει χτιστεί ακόμα ή υπάρχει σφάλμα. Βεβαιωθείτε ότι το "npm run build" ολοκληρώθηκε.');
+      }
+    });
   }
 });
 
-app.listen(PORT, '0.0.0.0', () => console.log(`🚀 Server running on port ${PORT}`));
+process.on('uncaughtException', (err) => {
+  console.error('💥 Uncaught Exception:', err);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('💥 Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`📂 Serving static files from: ${buildPath}`);
+});
